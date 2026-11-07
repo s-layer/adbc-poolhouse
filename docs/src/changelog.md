@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- adbc-poolhouse now requires `adbc-driver-manager>=1.13.0`, up from `>=1.8.0`. Under polars 2, older driver managers return a one-column struct `Series` from `fetch_polars()` instead of a `polars.DataFrame` ([apache/arrow-adbc#4915](https://github.com/apache/arrow-adbc/issues/4915)). 1.13.0 fixes that, so `fetch_polars()` returns a frame on every cursor: the async cursor, and now also the sync driver cursor that a `create_pool` pool hands out, which adbc-poolhouse never wrapped. The unnest added to `AsyncCursor.fetch_polars` in 1.6.4 is gone, since the driver now returns the frame itself. adbc-driver-manager 1.13.0 requires Python 3.11 or newer, the same as adbc-poolhouse.
+
 ## [1.8.0] - 2026-11-19
 
 ### Changed

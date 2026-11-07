@@ -68,6 +68,32 @@ class TestCreatePoolDuckDB:
             pool.dispose()
             pool._adbc_source.close()  # type: ignore[attr-defined]
 
+    def test_sync_cursor_fetch_polars_returns_dataframe(self, tmp_path: Path) -> None:
+        """
+        A sync pool cursor's own `fetch_polars` returns a `polars.DataFrame`.
+
+        The sync pool hands back the driver cursor unwrapped, so this is the
+        driver manager's `fetch_polars`. Under polars 2, adbc-driver-manager 1.12
+        and older return a one-column struct `Series` here (apache/arrow-adbc#4915);
+        the `>=1.13.0` floor is what makes this hold.
+        """
+        polars = pytest.importorskip("polars")
+        cfg = DuckDBConfig(database=str(tmp_path / "test.db"))
+        pool = create_pool(cfg)
+        try:
+            conn = pool.connect()
+            cur = conn.cursor()
+            cur.execute("SELECT 1::BIGINT AS a, 'x' AS b")
+            df = cur.fetch_polars()
+            assert isinstance(df, polars.DataFrame)
+            assert df.schema == polars.Schema({"a": polars.Int64, "b": polars.String})
+            assert df.to_dict(as_series=False) == {"a": [1], "b": ["x"]}
+            cur.close()
+            conn.close()
+        finally:
+            pool.dispose()
+            pool._adbc_source.close()  # type: ignore[attr-defined]
+
 
 class TestDuckDBInMemoryShared:
     """Every pooled :memory: connection opens the one database its source connection holds."""
