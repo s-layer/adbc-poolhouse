@@ -112,7 +112,7 @@ adbc-poolhouse/
 ├── .github/                     # GitHub configuration
 │   ├── workflows/
 │   │   ├── ci.yml              # CI/CD pipeline
-│   │   ├── docs.yml            # Documentation deployment
+│   │   ├── docs.yml            # Docs build (PRs) and deployment (main)
 │   │   ├── pr.yml              # PR coverage reporting
 │   │   └── release.yml         # PyPI release pipeline
 │   └── dependabot.yml          # Dependency updates
