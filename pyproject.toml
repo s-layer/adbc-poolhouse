@@ -90,6 +90,7 @@ markers = [
     "snowflake: requires live Snowflake credentials (recording only; cassettes checked in for CI replay)",
     "databricks: requires live Databricks credentials (recording only; cassettes checked in for CI replay)",
     "databricks_python: requires live Databricks credentials via the Python connector (recording only; cassettes checked in for CI replay)",
+    "optional_deps: needs pandas, polars or the Databricks connector, which the sync-suite CI jobs do not install (they deselect it)",
 ]
 
 [tool.pyright]

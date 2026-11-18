@@ -119,12 +119,14 @@ def test_fetch_record_batch_streams_all_rows(adapter: _DatabricksPythonConnectio
     assert total == 3
 
 
+@pytest.mark.optional_deps
 def test_fetch_df(adapter: _DatabricksPythonConnection) -> None:
     pytest.importorskip("pandas")
     cur = adapter.cursor()
     assert list(cur.fetch_df()["a"]) == [1, 2, 3]
 
 
+@pytest.mark.optional_deps
 def test_fetch_polars(adapter: _DatabricksPythonConnection) -> None:
     pytest.importorskip("polars")
     cur = adapter.cursor()
@@ -244,6 +246,7 @@ def _raising_adapter(table: pa.Table, error: BaseException) -> _DatabricksPython
     return _DatabricksPythonConnection(conn)
 
 
+@pytest.mark.optional_deps
 @pytest.mark.parametrize(("connector_cls", "adbc_cls"), _error_classes())
 def test_execute_reraises_connector_errors_as_adbc(
     table: pa.Table, dbsql_exc: Any, connector_cls: str, adbc_cls: str
@@ -261,6 +264,7 @@ def test_execute_reraises_connector_errors_as_adbc(
     assert "warehouse said no" in str(info.value)
 
 
+@pytest.mark.optional_deps
 @pytest.mark.parametrize(
     ("method", "args"),
     [
@@ -295,6 +299,7 @@ def test_every_cursor_call_translates(
     assert info.value.__cause__ is error
 
 
+@pytest.mark.optional_deps
 def test_a_failure_mid_stream_translates(table: pa.Table, dbsql_exc: Any) -> None:
     """An error fetching a later batch surfaces from ``read_next_batch`` as an ADBC error."""
     import adbc_driver_manager.dbapi as adbc
@@ -319,6 +324,7 @@ def test_a_failure_mid_stream_translates(table: pa.Table, dbsql_exc: Any) -> Non
     assert info.value.__cause__ is error
 
 
+@pytest.mark.optional_deps
 @pytest.mark.parametrize("method", ["close", "commit", "rollback", "cursor"])
 def test_connection_calls_translate(table: pa.Table, dbsql_exc: Any, method: str) -> None:
     import adbc_driver_manager.dbapi as adbc
@@ -336,6 +342,7 @@ def test_connection_calls_translate(table: pa.Table, dbsql_exc: Any, method: str
     assert info.value.__cause__ is error
 
 
+@pytest.mark.optional_deps
 def test_connect_translates_connector_errors(
     monkeypatch: pytest.MonkeyPatch, dbsql_exc: Any
 ) -> None:
@@ -357,6 +364,7 @@ def test_connect_translates_connector_errors(
     assert info.value.__cause__ is error
 
 
+@pytest.mark.optional_deps
 def test_autocommit_translates(dbsql_exc: Any) -> None:
     """The connector's ``autocommit`` raises ``InterfaceError`` on a closed session."""
     import adbc_driver_manager.dbapi as adbc

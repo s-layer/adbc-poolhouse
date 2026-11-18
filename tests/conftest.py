@@ -44,3 +44,7 @@ def _clear_warehouse_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:  # pyrig
     for key in list(os.environ):
         if key.startswith(_WAREHOUSE_ENV_PREFIXES):
             monkeypatch.delenv(key, raising=False)
+
+
+# Under CI, a skipped test fails the run (tests/ci_skips.py).
+pytest_plugins = ["tests.ci_skips"]

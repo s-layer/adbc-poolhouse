@@ -236,40 +236,28 @@ class TestLimiterSmokeFlood:
         promptly, so the bounded pool cycles all `_FLOOD` workers through and
         `checkedout() == 0` afterwards.
 
-        Deadlock backstop: unlike the stub leg, this flood has NO blocking stub the
-        watchdog could `close()` to force a stranded worker open --- the real ADBC
-        round trips are not gated, so `real_clock_watchdog([])` is passed an empty
-        cursor list and cannot interrupt a genuinely wedged worker. If the real
-        flood ever deadlocked the `async with` body would never return, so the
-        post-body `watchdog[0]` assertion would never be reached; the actual
-        fail-fast guarantee here is the SUITE-LEVEL / CI job timeout, not this
-        watchdog. The watchdog is retained only as a soft over-budget signal for the
-        non-deadlock case (a slow-but-completing flood): if the body finishes after
-        the wall-clock budget, the side thread will have set `tripped[0]`, and the
-        assertion flags the regression. A virtual `anyio.fail_after` is deliberately
-        NOT used as the backstop --- it autojumps to its own deadline under the trio
-        `MockClock` the instant the workers block off-loop and would trip every run
-        (Phase 24-26 landmine).
+        No wall-clock assertion: the real round trips are not gated, so a watchdog
+        could not break a wedged worker open, and a fixed time budget only measured
+        runner speed (it failed on slow CI runners). A hang is caught by the suite's
+        pytest-timeout and the CI job timeout. A virtual `anyio.fail_after` is
+        deliberately NOT used either --- it autojumps to its own deadline under the
+        trio `MockClock` the instant the workers block off-loop and would trip every
+        run (Phase 24-26 landmine).
         """
-        with real_clock_watchdog([]) as watchdog:
-            # Hold no more than the pool's capacity at once, so the bounded real
-            # QueuePool cycles every worker through instead of timing out a holder.
-            gate = anyio.CapacityLimiter(_BOUND)
+        # Hold no more than the pool's capacity at once, so the bounded real
+        # QueuePool cycles every worker through instead of timing out a holder.
+        gate = anyio.CapacityLimiter(_BOUND)
 
-            async def _round_trip(i: int) -> None:
-                async with gate, await duckdb_async_pool.connect() as conn:
-                    cur = conn.cursor()
-                    await cur.execute(f"SELECT {i} AS n")
-                    tbl = await cur.fetch_arrow_table()
-                    assert tbl.column("n")[0].as_py() == i
+        async def _round_trip(i: int) -> None:
+            async with gate, await duckdb_async_pool.connect() as conn:
+                cur = conn.cursor()
+                await cur.execute(f"SELECT {i} AS n")
+                tbl = await cur.fetch_arrow_table()
+                assert tbl.column("n")[0].as_py() == i
 
-            async with anyio.create_task_group() as tg:
-                for i in range(_FLOOD):
-                    tg.start_soon(_round_trip, i)
-        # Soft over-budget signal only (see docstring): a wedged worker is caught
-        # by the suite/CI timeout, not here, since the empty watchdog cannot break
-        # an ungated real worker open.
-        assert watchdog[0] is False, "TEST-04 smoke flood exceeded its wall-clock budget"
+        async with anyio.create_task_group() as tg:
+            for i in range(_FLOOD):
+                tg.start_soon(_round_trip, i)
         # No checkout leak: every connection the flood borrowed is back in the pool.
         assert duckdb_async_pool._pool.checkedout() == 0
         assert duckdb_async_pool._limiter.borrowed_tokens == 0

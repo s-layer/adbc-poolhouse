@@ -273,11 +273,13 @@ class TestEventGating:
 class TestVirtualClock:
     """`virtual_clock` makes anyio deadlines fire on virtual time, no wall-clock."""
 
+    # Trio only (MockClock is injected at the runner), so the asyncio leg is never
+    # generated rather than generated and skipped.
+    @pytest.mark.parametrize("anyio_backend", ["trio"], indirect=True)
     @pytest.mark.anyio
     async def test_trio_virtual_clock(self, anyio_backend_name: str) -> None:
         """Trio leg: `move_on_after(3600)` fires on VIRTUAL time, no wall-clock spent."""
-        if anyio_backend_name != "trio":
-            pytest.skip("trio-leg virtual-clock assertion (MockClock injected at runner)")
+        assert anyio_backend_name == "trio"
         # REAL wall-clock watchdog (T-23-08): a virtual 3600s deadline must fire
         # in a tiny fraction of a real second. A nested virtual fail_after would
         # autojump to ITS deadline first under MockClock, so the watchdog must be
@@ -290,11 +292,12 @@ class TestVirtualClock:
         assert scope.cancelled_caught  # the virtual 3600s deadline fired
         assert wall_elapsed < _WALL_CLOCK_BUDGET_S  # but no real time was consumed
 
+    # Asyncio only (aiotools patch_loop), so the trio leg is never generated.
+    @pytest.mark.parametrize("anyio_backend", ["asyncio"], indirect=True)
     @pytest.mark.anyio
     async def test_asyncio_virtual_clock(self, anyio_backend_name: str) -> None:
         """Asyncio leg (A1): `move_on_after(3600)` fires under aiotools `patch_loop()`."""
-        if anyio_backend_name != "asyncio":
-            pytest.skip("asyncio-leg virtual-clock assertion (aiotools patch_loop)")
+        assert anyio_backend_name == "asyncio"
         # Same real wall-clock watchdog shape; this RESOLVES open-question A1 --
         # does anyio's asyncio move_on_after/fail_after honour the aiotools
         # VirtualClock the facade installs via patch_loop()?
