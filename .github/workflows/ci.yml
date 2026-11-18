@@ -85,13 +85,14 @@ jobs:
       # pytest + pytest-adbc-replay are dev-only, supplied at run time via --with.
       # tests/async and tests/_async_harness import anyio/trio at collection time,
       # so they are deselected; the snowflake/databricks integration tests need
-      # their (non-installed) cloud drivers, so their markers are deselected too.
+      # their (non-installed) cloud drivers, so their markers are deselected too,
+      # as are the optional_deps tests (pandas, polars, the Databricks connector).
       - name: Run sync suite (async dirs + cloud-driver tests deselected)
         run: >-
           uv run --no-default-groups --extra duckdb --extra sqlite
           --with pytest --with pytest-adbc-replay
           pytest tests/ --ignore=tests/async --ignore=tests/_async_harness
-          -m "not snowflake and not databricks"
+          -m "not snowflake and not databricks and not optional_deps"
 
       - name: Cache pruning
         if: always()
@@ -138,7 +139,7 @@ jobs:
           --with "duckdb==${{ steps.floor.outputs.version }}"
           --with pytest --with pytest-adbc-replay
           pytest tests/ --ignore=tests/async --ignore=tests/_async_harness
-          -m "not snowflake and not databricks"
+          -m "not snowflake and not databricks and not optional_deps"
 
       - name: Cache pruning
         if: always()
