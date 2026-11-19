@@ -124,18 +124,22 @@ class _PoolhouseQueuePool(sqlalchemy.pool.QueuePool):
         with self._poolhouse_close_lock:
             first = not self._poolhouse_closed
             self._poolhouse_closed = True
-            while True:
-                with queue.mutex:
-                    if not queue.queue:
-                        break
-                    record = queue.queue.popleft()
-                try:
-                    record.close()
-                finally:
-                    # The record leaves the pool for good: drop it from the count,
-                    # as a check-in that overflows the queue does.
-                    self._dec_overflow()
-            queue.close()
+            try:
+                while True:
+                    with queue.mutex:
+                        if not queue.queue:
+                            break
+                        record = queue.queue.popleft()
+                    try:
+                        record.close()
+                    finally:
+                        # The record leaves the pool for good: drop it from the
+                        # count, as a check-in that overflows the queue does.
+                        self._dec_overflow()
+            finally:
+                # Wake waiting checkouts even if closing an idle connection raised;
+                # a later `close_pool` drains whatever is left.
+                queue.close()
         if first:
             self.logger.info("Pool closed. %s", self.status())
 
