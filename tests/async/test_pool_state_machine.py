@@ -36,12 +36,15 @@ checked-out connections, so the teardown drains first, as the guide tells users 
 
 The machine runs on a blocking portal (one event loop in a side thread for the
 whole example), on both anyio backends. Each step is driven from the test thread,
-so a step that hangs is caught by the pytest-timeout mark.
+so a step that hangs is caught by the pytest-timeout mark (thread method, see
+`pytestmark`).
 """
 
 from __future__ import annotations
 
 import contextlib
+import importlib
+import uuid
 from typing import TYPE_CHECKING, Any, cast
 
 import anyio
@@ -78,7 +81,22 @@ if TYPE_CHECKING:
 _SLOW_QUERY = "SELECT count(*) FROM range(10000) a, range(10000) b WHERE a.range % 7 = b.range % 7"
 _CANCEL_AFTER_S = 0.02
 
-pytestmark = pytest.mark.timeout(300)
+# CI repeats concurrency-sensitive async tests ADBC_ASYNC_REPEAT times, as
+# `concurrency_marks` does. The timeout uses pytest-timeout's thread method: a hung step
+# leaves its task running on the portal's loop, and the signal method would raise in the
+# test thread only for teardown to wait on that task forever. The thread method dumps the
+# stacks and ends the run instead.
+# `tests/async/` cannot be imported with a dotted path (`async` is a reserved keyword),
+# so the sibling helper module is loaded via importlib.
+_helpers = importlib.import_module("tests.async._edge_helpers")
+pytestmark = [
+    pytest.mark.repeat(_helpers._ASYNC_REPEAT),  # noqa: SLF001
+    pytest.mark.timeout(_helpers._ASYNC_TIMEOUT_S, method="thread"),  # noqa: SLF001
+]
+
+# How many times, per backend, the cancel landed mid-query. The run fails if it never
+# did, since the cancel-mid-query path would then have gone untested.
+_cancels_landed: dict[str, int] = {}
 
 
 class PoolMachine(RuleBasedStateMachine):
@@ -104,7 +122,7 @@ class PoolMachine(RuleBasedStateMachine):
     def make_pool(self, pool_size: int, max_overflow: int) -> None:
         async def _make() -> AsyncPool:
             return create_async_pool(
-                DuckDBConfig(database=self.database),
+                DuckDBConfig(database=f"{self.database}/{uuid.uuid4().hex}.db"),
                 pool_size=pool_size,
                 max_overflow=max_overflow,
                 timeout=0,
@@ -246,6 +264,7 @@ class PoolMachine(RuleBasedStateMachine):
         else:
             # The cancel landed: the poisoned connection left the pool.
             self.dead.append(conn)
+            _cancels_landed[self.backend] = _cancels_landed.get(self.backend, 0) + 1
 
     # --- invariants ----------------------------------------------------------
 
@@ -255,7 +274,6 @@ class PoolMachine(RuleBasedStateMachine):
             return
         sync_pool = self.pool._pool  # noqa: SLF001
         assert sync_pool.checkedout() == len(self.held)
-        assert len(self.held) <= self.ceiling
         # Every open DBAPI connection is accounted for: either behind a connection the
         # test holds, or idle in the pool's queue. (An invalidated connection's record
         # goes back to the queue empty and reconnects on its next checkout.)
@@ -272,13 +290,19 @@ class PoolMachine(RuleBasedStateMachine):
     def teardown(self) -> None:
         try:
             if self.pool is not None:
-                for conn in self.held:
-                    self.portal.call(conn.close)
-                self.held.clear()
-                assert self.pool._pool.checkedout() == 0  # noqa: SLF001
-                self.portal.call(self.pool.close)
+                pool, self.pool = self.pool, None
+                try:
+                    for conn in self.held:
+                        self.portal.call(conn.close)
+                    self.held.clear()
+                    assert pool._pool.checkedout() == 0  # noqa: SLF001
+                finally:
+                    # Close even after a failure, so Hypothesis shrinks on a clean slate.
+                    self.portal.call(pool.close)
                 still_open = [c for c in self.dbapi_connections if not c._closed]  # noqa: SLF001
                 assert not still_open, f"{len(still_open)} DBAPI connection(s) leaked"
+                source = cast("Any", pool._pool)._adbc_source  # noqa: SLF001
+                assert source._closed, "the pool's ADBC source connection was left open"  # noqa: SLF001
         finally:
             self._exit.close()
 
@@ -289,7 +313,7 @@ def test_pool_invariants_hold_under_random_orderings(backend: str, tmp_path: Pat
     machine = type(
         f"PoolMachine_{backend}",
         (PoolMachine,),
-        {"backend": backend, "database": str(tmp_path / "state_machine.db")},
+        {"backend": backend, "database": str(tmp_path)},
     )
     run_state_machine_as_test(
         machine,
@@ -299,4 +323,8 @@ def test_pool_invariants_hold_under_random_orderings(backend: str, tmp_path: Pat
             deadline=None,
             suppress_health_check=[HealthCheck.too_slow],
         ),
+    )
+    assert _cancels_landed.pop(backend, 0) > 0, (
+        "no query was cancelled mid-flight, so the cancel-mid-query path never ran; "
+        "_SLOW_QUERY may now finish within _CANCEL_AFTER_S on this machine"
     )

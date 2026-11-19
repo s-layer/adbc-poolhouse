@@ -8,15 +8,22 @@ description: Prove a change to adbc-poolhouse works end to end. Use before sayin
 Run from the repository root:
 
 ```bash
+export CI=true  # CI's skip gate: a skipped test fails the run
 uv sync --locked --dev --extra duckdb
+uv tool install prek  # once; skip if prek is already on PATH
 prek run --all-files
 uv run pytest > /tmp/pytest.log 2>&1; echo "pytest rc=$?"
 uv run mkdocs build --strict
 ```
 
-It passes when every command exits 0. prek runs basedpyright, ruff and the format check
-but no tests, so pytest is a separate step. For a change to the async layer, run the
-async suite the way CI does: `ADBC_ASYNC_REPEAT=20 uv run pytest tests/async`.
+It passes when every command exits 0 and every printed `rc=` is 0. prek runs
+basedpyright, ruff and the format check but no tests, so pytest is a separate step. For
+a change to the async layer, run the async suite the way CI does: `ADBC_ASYNC_REPEAT=20
+uv run pytest tests/async`.
+
+`CI=true` turns on `tests/ci_skips.py`, which fails the run on any skip not allowed
+there, as CI does. Without it a skipped test only shows in the summary, and a run that
+skipped what you changed is not a pass.
 
 Take each command's exit status from the command itself. In a pipeline `$?` is the last
 command's status, so `cmd | tail` hides a failure. Redirect long output to a file, then
@@ -35,6 +42,7 @@ read the file.
 - the lowest supported driver release: CI's floor job
 - live warehouses: cassettes replay what was recorded, so a warehouse change needs a
   re-record
+- Python versions other than the one you ran: CI runs a version matrix
 
 ## When it fails
 
