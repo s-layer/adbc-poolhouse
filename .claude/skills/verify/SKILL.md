@@ -8,7 +8,7 @@ description: Prove a change to adbc-poolhouse works end to end. Use before sayin
 Run from the repository root:
 
 ```bash
-uv sync --locked --dev --extra duckdb
+uv sync --locked --dev --group docs --extra duckdb
 uv tool install prek  # once; skip if prek is already on PATH
 prek run --all-files
 CI=true uv run pytest > /tmp/pytest.log 2>&1; echo "pytest rc=$?"
