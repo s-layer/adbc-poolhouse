@@ -13,6 +13,7 @@ from adbc_poolhouse._duckdb_config import DuckDBConfig
 from adbc_poolhouse._exceptions import (
     ConfigurationError,
     ConnectionBusyError,
+    PoolClosedError,
     PoolhouseError,
 )
 from adbc_poolhouse._flightsql_config import FlightSQLConfig
@@ -48,6 +49,7 @@ __all__ = [
     "FlightSQLConfig",
     "MSSQLConfig",
     "MySQLConfig",
+    "PoolClosedError",
     "PoolhouseError",
     "PostgreSQLConfig",
     "QuackConfig",

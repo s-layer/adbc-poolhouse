@@ -48,7 +48,7 @@ A handler that writes needs one more call. Pooled connections are not in autocom
 
 If you would rather create and close the pool by hand, [`create_async_pool`][adbc_poolhouse.create_async_pool] and [`close_async_pool`][adbc_poolhouse.close_async_pool] split the same work across the two halves of the lifespan.
 
-Closing is worth being precise about. It disposes the connections sitting idle in the pool and closes the underlying ADBC source connection, and it does that immediately: it neither waits for nor closes connections that are still checked out. The teardown itself is shielded from cancellation, so a shutdown signal cannot abandon the pool half-closed, but ordering is still yours to get right. A lifespan hook gives you that ordering for free under a server that shuts down gracefully, uvicorn included, because in-flight requests finish before the shutdown half of the lifespan runs. Anywhere else, drain your own work first.
+Closing is worth being precise about. It disposes the connections sitting idle in the pool and closes the underlying ADBC source connection, and it does that immediately: it does not wait for connections that are still checked out, and closes each one when it is checked in instead of pooling it. After that, `connect()` raises [`PoolClosedError`][adbc_poolhouse.PoolClosedError]. The teardown itself is shielded from cancellation, so a shutdown signal cannot abandon the pool half-closed, but ordering is still yours to get right. A lifespan hook gives you that ordering for free under a server that shuts down gracefully, uvicorn included, because in-flight requests finish before the shutdown half of the lifespan runs. Anywhere else, drain your own work first.
 
 ## The sync pool in a FastAPI lifespan
 

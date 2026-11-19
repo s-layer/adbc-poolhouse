@@ -171,12 +171,16 @@ def create_async_pool(
 
 async def close_async_pool(pool: AsyncPool) -> None:
     """
-    Dispose an `AsyncPool` and close its underlying ADBC source.
+    Close an `AsyncPool` for good, with its idle connections and its ADBC source.
 
     The async analog of [`close_pool`][adbc_poolhouse.close_pool]. The blocking
     teardown runs on a worker thread inside a shielded cancel scope (in
     `AsyncPool.close`), so a cancellation cannot abandon the pool mid-close and
     leak driver resources.
+
+    It follows the same rules: connections still checked out are not waited for
+    and are closed when they are checked in, and `await pool.connect()` on the
+    closed pool raises `PoolClosedError`.
 
     Args:
         pool: A pool returned by `create_async_pool`.

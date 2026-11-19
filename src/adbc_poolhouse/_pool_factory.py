@@ -21,15 +21,20 @@ Internal helpers are prefixed with _ and not exported.
 from __future__ import annotations
 
 import contextlib
-from typing import TYPE_CHECKING, overload
+import threading
+from typing import TYPE_CHECKING, Any, cast, overload
 
 import sqlalchemy.pool
 from sqlalchemy import event
+from sqlalchemy.util import queue as sqla_queue
 
 from adbc_poolhouse._driver_api import create_adbc_connection
+from adbc_poolhouse._exceptions import PoolClosedError
 
 if TYPE_CHECKING:
     import collections.abc
+
+    from sqlalchemy.pool import ConnectionPoolEntry
 
     from adbc_poolhouse._backend import ConnectionBackend
     from adbc_poolhouse._base_config import WarehouseConfig
@@ -42,6 +47,129 @@ _TUNING_DEFAULTS: dict[str, int | bool] = {
     "recycle": 3600,
     "pre_ping": False,
 }
+
+
+class _ClosableQueue(sqla_queue.Queue[Any]):
+    """
+    The pool's queue of idle connections, with a closed state.
+
+    Once closed, a `get` that finds the queue empty raises `PoolClosedError`
+    instead of reporting it empty or waiting, and `close` wakes every `get`
+    already waiting. That is how a checkout blocked on a full pool learns the
+    pool closed, rather than waiting out the pool's `timeout`.
+    """
+
+    closed = False
+
+    def close(self) -> None:
+        """Mark the queue closed and wake every waiting `get`."""
+        with self.mutex:
+            self.closed = True
+            self.not_empty.notify_all()
+
+    def _empty(self) -> bool:
+        # A closed queue never reads as empty, so `get` neither raises `Empty`
+        # nor waits: it goes on to `_get`, which raises `PoolClosedError`.
+        return not self.queue and not self.closed
+
+    def _get(self) -> Any:
+        if not self.queue:
+            raise PoolClosedError
+        return super()._get()
+
+
+class _PoolhouseQueuePool(sqlalchemy.pool.QueuePool):
+    """
+    A `QueuePool` that `close_pool` can close for good.
+
+    SQLAlchemy's `dispose()` is a reset: the pool keeps serving afterwards, and a
+    connection checked out across it is put back into the queue on check-in. A
+    pool whose ADBC source has been closed cannot serve again, so `close_pool`
+    calls `_close()` instead, after which:
+
+    - `connect()` raises `PoolClosedError` rather than trying to open a
+      connection (on the ADBC path, a clone of the closed source), and so does a
+      `connect()` that was already waiting for a free connection;
+    - a connection checked in is closed, not queued, so nothing is left open in a
+      pool no one will close again;
+    - `checkedout()` keeps counting the connections still out until they return.
+
+    `dispose()` keeps SQLAlchemy's meaning on an open pool and does nothing on a
+    closed one.
+    """
+
+    _queue_class = _ClosableQueue
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._poolhouse_closed = False
+        # Set by `close_pool` once the ADBC source or native backend has closed,
+        # so a failed source close is retried by the next `close_pool`.
+        self._poolhouse_source_closed = False
+        # Held across the closed check and the queue put on check-in, so a
+        # connection returned while `_close()` runs is either drained by it or
+        # closed on return, never left in the queue. Reentrant because a check-in
+        # can also run from SQLAlchemy's weakref finalizer, which garbage
+        # collection may fire on a thread that already holds the lock.
+        self._poolhouse_close_lock = threading.RLock()
+
+    def _close(self) -> None:
+        """
+        Mark the pool closed, close its idle connections and wake waiting checkouts.
+
+        Safe to call again: a later call closes anything a failed earlier one left
+        in the queue.
+        """
+        queue = cast("_ClosableQueue", self._pool)
+        with self._poolhouse_close_lock:
+            first = not self._poolhouse_closed
+            self._poolhouse_closed = True
+            try:
+                while True:
+                    with queue.mutex:
+                        if not queue.queue:
+                            break
+                        record = queue.queue.popleft()
+                    try:
+                        record.close()
+                    finally:
+                        # The record leaves the pool for good: drop it from the
+                        # count, as a check-in that overflows the queue does.
+                        self._dec_overflow()
+            finally:
+                # Wake waiting checkouts even if closing an idle connection raised;
+                # a later `close_pool` drains whatever is left.
+                queue.close()
+        if first:
+            self.logger.info("Pool closed. %s", self.status())
+
+    def dispose(self) -> None:
+        if self._poolhouse_closed:
+            return
+        super().dispose()
+
+    def _do_get(self) -> ConnectionPoolEntry:
+        if self._poolhouse_closed:
+            raise PoolClosedError
+        return super()._do_get()
+
+    def _create_connection(self) -> ConnectionPoolEntry:
+        # A checkout that passed the closed check before `_close()` ran can reach
+        # here with the pool closed. `QueuePool._do_get` undoes its overflow
+        # increment when this raises.
+        if self._poolhouse_closed:
+            raise PoolClosedError
+        return super()._create_connection()
+
+    def _do_return_conn(self, record: ConnectionPoolEntry) -> None:
+        with self._poolhouse_close_lock:
+            if not self._poolhouse_closed:
+                super()._do_return_conn(record)
+                return
+        try:
+            record.close()
+        finally:
+            self._dec_overflow()
 
 
 def _resolve_tuning(
@@ -152,7 +280,7 @@ def _create_pool_impl(
         dbapi_module=resolved_dbapi_module,
     )
 
-    pool = sqlalchemy.pool.QueuePool(
+    pool = _PoolhouseQueuePool(
         source.adbc_clone,  # type: ignore[arg-type]
         pool_size=pool_size,
         max_overflow=max_overflow,
@@ -185,7 +313,7 @@ def _create_native_pool(
     it down, and its ``on_reset`` runs on the pool ``reset`` event to release
     Arrow buffers on check-in.
     """
-    pool = sqlalchemy.pool.QueuePool(
+    pool = _PoolhouseQueuePool(
         backend.creator(),
         pool_size=pool_size,
         max_overflow=max_overflow,
@@ -351,11 +479,18 @@ def create_pool(
 
 def close_pool(pool: sqlalchemy.pool.QueuePool) -> None:
     """
-    Dispose a pool and close its underlying ADBC source connection.
+    Close a pool for good, with its idle connections and its ADBC source connection.
 
-    Replaces the two-step pattern ``pool.dispose()`` followed by
-    ``pool._adbc_source.close()``. Always call this instead of calling
-    ``pool.dispose()`` directly to avoid leaving the ADBC source connection open.
+    Always call this rather than ``pool.dispose()``: SQLAlchemy's ``dispose()``
+    only resets the pool and leaves the ADBC source connection open.
+
+    Closing does not wait for connections that are still checked out. Each one is
+    closed when it is checked in, instead of going back into the pool, and
+    ``pool.checkedout()`` counts them until then. After closing,
+    ``pool.connect()`` raises `PoolClosedError`, and so does a ``connect()`` that
+    was already waiting for a free connection. Calling ``close_pool`` again does
+    nothing, unless closing the source failed the first time, in which case it
+    tries again.
 
     Args:
         pool: A pool returned by `create_pool`.
@@ -368,12 +503,19 @@ def close_pool(pool: sqlalchemy.pool.QueuePool) -> None:
         close_pool(pool)
         ```
     """
-    pool.dispose()
+    if isinstance(pool, _PoolhouseQueuePool):
+        pool._close()  # noqa: SLF001
+        if pool._poolhouse_source_closed:  # noqa: SLF001
+            return
+    else:
+        pool.dispose()
     native_backend = getattr(pool, "_native_backend", None)
     if native_backend is not None:
         native_backend.close()
     else:
         pool._adbc_source.close()  # type: ignore[attr-defined]
+    if isinstance(pool, _PoolhouseQueuePool):
+        pool._poolhouse_source_closed = True  # noqa: SLF001
 
 
 @overload

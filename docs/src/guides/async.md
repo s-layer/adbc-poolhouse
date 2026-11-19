@@ -581,7 +581,9 @@ being torn down.
 
 Shielded is not the same as drained. `close_async_pool` disposes the connections
 sitting idle in the pool and closes the ADBC source connection. It does not wait
-for connections that are still checked out, and it does not close them. It also
+for connections that are still checked out; each is closed when it is checked
+in, rather than going back into the pool, and `await pool.connect()` on the closed
+pool raises [`PoolClosedError`][adbc_poolhouse.PoolClosedError]. It also
 borrows a limiter token like any other offloaded call, so it waits for a free
 slot, but that is a wait for capacity rather than for the work in flight. Close
 the pool once the tasks using it have finished.

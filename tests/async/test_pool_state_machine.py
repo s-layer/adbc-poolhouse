@@ -15,6 +15,7 @@ example builds a real DuckDB `AsyncPool` with a drawn `pool_size` and
   never starts, so the connection must stay usable), or cancelled while it runs
   (the connection is either still fine, if the query won the race, or dropped)
 - check out from inside an already-cancelled scope (nothing may be checked out)
+- close the pool, possibly with connections still checked out (see below)
 
 After every step it checks the pool against a model that only knows which
 connections the test is holding:
@@ -30,9 +31,10 @@ connections the test is holding:
 At the end it checks everything in, closes the pool and requires every DBAPI
 connection to be closed.
 
-Closing the pool while connections are still checked out is not one of the
-operations: the pool-lifecycle guide says close neither waits for nor closes
-checked-out connections, so the teardown drains first, as the guide tells users to.
+One operation closes the pool while connections may still be checked out. After
+it, every checkout must raise `PoolClosedError`, the held connections keep
+working, each one is closed (not pooled) when it is checked in or invalidated,
+and `checkedout()` keeps counting the ones still out.
 
 The machine runs on a blocking portal (one event loop in a side thread for the
 whole example), on both anyio backends. Each step is driven from the test thread,
@@ -64,7 +66,7 @@ from hypothesis.stateful import (
 )
 from sqlalchemy import event
 
-from adbc_poolhouse import DuckDBConfig, create_async_pool
+from adbc_poolhouse import DuckDBConfig, PoolClosedError, create_async_pool
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -113,6 +115,7 @@ class PoolMachine(RuleBasedStateMachine):
         )
         self.pool: AsyncPool | None = None
         self.ceiling = 0
+        self.closed = False
         # The model: the connections the test holds, and the invalidated handles.
         self.held: list[AsyncConnection] = []
         self.dead: list[AsyncConnection] = []
@@ -160,6 +163,10 @@ class PoolMachine(RuleBasedStateMachine):
     @rule()
     def checkout(self) -> None:
         pool = self._pool()
+        if self.closed:
+            with pytest.raises(PoolClosedError):
+                self.portal.call(pool.connect)
+            return
         if len(self.held) == self.ceiling:
             with pytest.raises(sqlalchemy.exc.TimeoutError):
                 self.portal.call(pool.connect)
@@ -182,6 +189,16 @@ class PoolMachine(RuleBasedStateMachine):
 
         got = self.portal.call(_run)
         assert got is None, "a checkout cancelled before it started returned a connection"
+
+    # --- close ---------------------------------------------------------------
+
+    @precondition(lambda self: not self.closed)
+    @rule()
+    def close_pool(self) -> None:
+        # Whatever is still held stays held; the model only notes the pool is closed.
+        self.portal.call(self._pool().close)
+        self.closed = True
+        count_outcome(f"pool closed with {len(self.held)} held")
 
     # --- check-in ------------------------------------------------------------
 
@@ -278,6 +295,8 @@ class PoolMachine(RuleBasedStateMachine):
         # test holds, or idle in the pool's queue. (An invalidated connection's record
         # goes back to the queue empty and reconnects on its next checkout.)
         idle: Iterable[ConnectionPoolEntry] = cast("Any", sync_pool)._pool.queue
+        if self.closed:
+            assert not idle, "a closed pool kept an idle connection"
         accounted: list[object] = [conn._fairy.dbapi_connection for conn in self.held]  # noqa: SLF001
         accounted += [r.dbapi_connection for r in idle if r.dbapi_connection is not None]
         open_conns = [c for c in self.dbapi_connections if not c._closed]  # noqa: SLF001
@@ -298,6 +317,7 @@ class PoolMachine(RuleBasedStateMachine):
                     assert pool._pool.checkedout() == 0  # noqa: SLF001
                 finally:
                     # Close even after a failure, so Hypothesis shrinks on a clean slate.
+                    # Closing an already-closed pool is a no-op.
                     self.portal.call(pool.close)
                 still_open = [c for c in self.dbapi_connections if not c._closed]  # noqa: SLF001
                 assert not still_open, f"{len(still_open)} DBAPI connection(s) leaked"

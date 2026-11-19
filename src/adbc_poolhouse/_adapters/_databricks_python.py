@@ -453,7 +453,7 @@ class DatabricksPythonBackend:
         return _open
 
     def close(self) -> None:
-        """No shared source to close; pooled connections are closed by ``dispose``."""
+        """No shared source to close; `close_pool` closes the pooled connections."""
 
     def on_reset(self, dbapi_conn: object) -> None:
         """Close open cursors on ``dbapi_conn`` to release Arrow buffers, if it tracks any."""

@@ -8,7 +8,7 @@ description: Prove a change to adbc-poolhouse works end to end. Use before sayin
 Run from the repository root:
 
 ```bash
-uv sync --locked --dev --extra duckdb
+uv sync --locked --dev --group docs --extra duckdb
 uv tool install prek  # once; skip if prek is already on PATH
 prek run --all-files
 CI=true uv run pytest > /tmp/pytest.log 2>&1; echo "pytest rc=$?"
@@ -34,7 +34,7 @@ read the file.
 
 - the sync and async pools against real DuckDB and SQLite, and the Snowflake and
   Databricks cassettes in replay
-- random orderings of checkout, check-in, cancel and invalidate
+- random orderings of checkout, check-in, cancel, invalidate and pool close
   (`tests/async/test_pool_state_machine.py`)
 
 ## What it does not cover
