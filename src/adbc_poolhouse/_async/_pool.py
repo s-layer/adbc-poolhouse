@@ -118,15 +118,19 @@ class AsyncPool:
 
         Returns:
             An `AsyncConnection` wrapping the checked-out sync connection.
+
+        Raises:
+            PoolClosedError: If the pool has been closed, including while this
+                checkout was waiting for a free connection.
         """
         fairy = await offload(self._pool.connect, limiter=self._checkout_limiter)
         return AsyncConnection(fairy, self._limiter)
 
     async def close(self) -> None:
         """
-        Dispose the pool and close its ADBC source, shielded from cancellation.
+        Close the pool for good and close its ADBC source, shielded from cancellation.
 
-        The blocking teardown (`close_pool`, which disposes the pool and closes
+        The blocking teardown (`close_pool`, which closes the idle connections and
         the underlying ADBC source connection) is offloaded under the pool limiter
         and wrapped in `anyio.CancelScope(shield=True)`, so a cancellation
         arriving mid-close cannot abandon the pool with leaked driver resources.
