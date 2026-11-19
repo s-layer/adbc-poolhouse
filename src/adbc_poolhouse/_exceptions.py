@@ -69,3 +69,34 @@ class ConnectionBusyError(PoolhouseError):
                 connection-aliasing message.
         """
         super().__init__(message if message is not None else self._MESSAGE)
+
+
+class PoolClosedError(PoolhouseError):
+    """
+    Raised when a connection is requested from a pool that has been closed.
+
+    [`close_pool`][adbc_poolhouse.close_pool] and
+    [`close_async_pool`][adbc_poolhouse.close_async_pool] (and leaving a
+    `managed_pool` / `managed_async_pool` block) end a pool's life: every later
+    `connect()` raises this error instead of opening a new connection that
+    nothing would ever close. Create a new pool if you need one.
+
+    Example:
+        ```python
+        pool = create_pool(DuckDBConfig(database="/tmp/wh.db"))
+        close_pool(pool)
+        pool.connect()  # raises PoolClosedError
+        ```
+    """
+
+    _MESSAGE = "This pool has been closed; create a new pool to open connections."
+
+    def __init__(self, message: str | None = None) -> None:
+        """
+        Initialize with the canonical message, or an override.
+
+        Args:
+            message: Custom error text. Defaults to the canonical closed-pool
+                message.
+        """
+        super().__init__(message if message is not None else self._MESSAGE)
