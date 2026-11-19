@@ -255,7 +255,8 @@ async def managed_async_pool(
     The async analog of [`managed_pool`][adbc_poolhouse.managed_pool]. The pool is
     created when the `async with` block is entered and closed (via
     `close_async_pool`, whose teardown is shielded from cancellation) when the
-    block exits, whether normally or by exception.
+    block exits, whether normally or by exception. An ``await pool.connect()``
+    after the block raises `PoolClosedError`.
 
     Pool-tuning arguments resolve with the same precedence as the sync entry
     points: an explicit keyword wins, otherwise the config's own field is used
