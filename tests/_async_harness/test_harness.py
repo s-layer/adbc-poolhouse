@@ -52,10 +52,12 @@ _WALL_CLOCK_BUDGET_S = 5.0
 # collection-level check below asserts both ids are present.
 _BACKEND_IDS = frozenset({"asyncio", "trio"})
 
-# Bound for the "worker is inside the blocked section" poll below. Each iteration
-# is a single `anyio.sleep(0)` checkpoint (no wall-clock), so this is just a
-# generous ceiling on scheduler hand-offs, not a timeout.
-_ENTRY_POLL_TRIES = 100_000
+# Bound for the "worker is inside the blocked section" poll below, in REAL seconds.
+# Each iteration is a single `anyio.sleep(0)` checkpoint, so no test clock advances;
+# only the give-up point is wall-clock. A fixed count of checkpoints could run out
+# on a loaded CI runner before the worker thread was scheduled (see
+# `tests/async/_edge_helpers.py`).
+_ENTRY_POLL_BUDGET_S = 5.0
 
 # Real wall-clock watchdog (seconds) for the re-arm self-test. The gated calls are
 # released almost immediately, so a re-arm regression that strands the
@@ -117,7 +119,8 @@ async def _await_inside(predicate: Callable[[], bool]) -> bool:
     the test is about to assert on. Returns the final `predicate()` value so the
     caller can assert on a settled observation.
     """
-    for _ in range(_ENTRY_POLL_TRIES):
+    deadline = time.monotonic() + _ENTRY_POLL_BUDGET_S
+    while time.monotonic() < deadline:
         if predicate():
             return True
         await anyio.sleep(0)

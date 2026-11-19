@@ -22,6 +22,7 @@ from __future__ import annotations
 import contextlib
 import os
 import threading
+import time
 from typing import TYPE_CHECKING
 
 import anyio
@@ -32,9 +33,15 @@ if TYPE_CHECKING:
 
     from tests._async_harness.stubs import BlockingStubCursor
 
-# Bound for the inside-poll: each iteration is one `anyio.sleep(0)` checkpoint (no
-# wall-clock), so this is just a generous ceiling on scheduler hand-offs.
-_ENTRY_POLL_TRIES = 100_000
+# Bound for the inside-poll, in REAL seconds. Each iteration is one `anyio.sleep(0)`
+# checkpoint, so the poll never advances a test clock (trio's MockClock included);
+# only the give-up point is measured on the wall clock. A count of checkpoints was
+# used before, and on a loaded CI runner 100,000 of them sometimes passed before
+# every worker thread had been scheduled into the stub, so the poll gave up and the
+# caller's assertion failed with fewer workers inside than expected. Kept equal to
+# `real_clock_watchdog`'s default budget: a worker that is truly stuck trips the
+# watchdog at the same moment.
+_ENTRY_POLL_BUDGET_S = 5.0
 
 # The concurrency EDGE suites exercise REAL worker-thread scheduling in the
 # offload/cancel path, so a single green run is not acceptance --- an intermittent
@@ -104,14 +111,14 @@ def real_clock_watchdog(
 
 async def await_inside(predicate: Callable[[], bool]) -> bool:
     """
-    Yield (`anyio.sleep(0)` only) until `predicate()` holds or the bound is hit.
+    Yield (`anyio.sleep(0)` only) until `predicate()` holds or 5 real seconds pass.
 
     The production `offload` path has no loop-facing `entered` event, so a test
     that needs "the worker is now inside the blocked stub call" polls the stub's
     lock-guarded counters here instead. Each iteration is a pure `sleep(0)`
-    checkpoint (no wall-clock), so this settles deterministically under both the
-    asyncio and trio MockClock legs. Returns the final `predicate()` value so the
-    caller can assert on a settled observation.
+    checkpoint, so the poll never advances a test clock under either the asyncio
+    or the trio MockClock leg; only the give-up point is wall-clock. Returns the
+    final `predicate()` value so the caller can assert on a settled observation.
 
     Args:
         predicate: A zero-argument check on the stub state to wait for.
@@ -119,7 +126,8 @@ async def await_inside(predicate: Callable[[], bool]) -> bool:
     Returns:
         `True` if `predicate()` became true within the bound, else its final value.
     """
-    for _ in range(_ENTRY_POLL_TRIES):
+    deadline = time.monotonic() + _ENTRY_POLL_BUDGET_S
+    while time.monotonic() < deadline:
         if predicate():
             return True
         await anyio.sleep(0)

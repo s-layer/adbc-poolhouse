@@ -574,9 +574,9 @@ def managed_pool(
     """
     Context manager that creates a pool and closes it on exit.
 
-    The pool is created when the ``with`` block is entered and disposed
+    The pool is created when the ``with`` block is entered and closed
     (via `close_pool`) when the block exits, whether normally or by
-    exception.
+    exception. A ``pool.connect()`` after the block raises `PoolClosedError`.
 
     Three call patterns are supported:
 
