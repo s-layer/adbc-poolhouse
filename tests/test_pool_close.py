@@ -11,7 +11,9 @@ Each case is its own test so each one is seen failing on its own.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+import threading
+import time
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from sqlalchemy import event
@@ -198,3 +200,96 @@ def test_native_pool_connection_checked_in_after_close_is_closed() -> None:
     conn.close()
     assert backend.opened[0].closed
     assert pool.checkedout() == 0
+
+
+def _connect_in_thread(pool: sqlalchemy.pool.QueuePool) -> tuple[threading.Thread, list[object]]:
+    """Start `pool.connect()` on a thread; the list receives what it returned or raised."""
+    outcome: list[object] = []
+
+    def _run() -> None:
+        try:
+            outcome.append(pool.connect())
+        except BaseException as exc:  # noqa: BLE001
+            outcome.append(exc)
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+    return thread, outcome
+
+
+def _wait_until_blocked(pool: sqlalchemy.pool.QueuePool) -> None:
+    """Wait until a checkout thread is blocked on the pool's empty queue."""
+    queue = cast("Any", pool)._pool
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        # A waiter sits in `not_empty.wait`, which registers it on the condition.
+        if queue.not_empty._waiters:
+            return
+        time.sleep(0.01)
+    pytest.fail("the checkout never blocked on the pool")
+
+
+def test_checkout_waiting_when_the_pool_closes_raises_promptly(tmp_path: Path) -> None:
+    """A checkout already blocked on a full pool fails at close, not after `timeout`."""
+    pool = create_pool(
+        DuckDBConfig(database=str(tmp_path / "waiter.db")),
+        pool_size=1,
+        max_overflow=0,
+        timeout=20,
+    )
+    held = pool.connect()
+    thread, outcome = _connect_in_thread(pool)
+    _wait_until_blocked(pool)
+    close_pool(pool)
+    held.close()
+    thread.join(timeout=5)
+    assert not thread.is_alive(), "the waiting checkout was still blocked 5 s after close"
+    assert len(outcome) == 1
+    assert isinstance(outcome[0], PoolClosedError), outcome[0]
+
+
+def test_native_checkout_waiting_when_the_pool_closes_opens_nothing() -> None:
+    """On a stateless backend the waiter must not open a connection after close."""
+    backend = _StatelessBackend()
+    pool = _native_pool(backend)
+    first, second = pool.connect(), pool.connect()
+    thread, outcome = _connect_in_thread(pool)
+    _wait_until_blocked(pool)
+    close_pool(pool)
+    first.close()
+    second.close()
+    thread.join(timeout=5)
+    assert not thread.is_alive(), "the waiting checkout was still blocked 5 s after close"
+    assert isinstance(outcome[0], PoolClosedError), outcome[0]
+    assert len(backend.opened) == 2
+
+
+class _FailingCloseBackend(_StatelessBackend):
+    """A backend whose teardown fails the first time."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.close_calls = 0
+
+    def close(self) -> None:
+        self.close_calls += 1
+        if self.close_calls == 1:
+            raise RuntimeError("teardown failed")
+
+
+def test_close_pool_retries_a_failed_source_close() -> None:
+    backend = _FailingCloseBackend()
+    pool = _native_pool(backend)
+    with pytest.raises(RuntimeError, match="teardown failed"):
+        close_pool(pool)
+    close_pool(pool)
+    assert backend.close_calls == 2
+    close_pool(pool)
+    assert backend.close_calls == 2, "a third close tore the backend down again"
+
+
+def test_dispose_on_a_closed_pool_is_a_no_op(pool: sqlalchemy.pool.QueuePool) -> None:
+    close_pool(pool)
+    pool.dispose()
+    with pytest.raises(PoolClosedError):
+        pool.connect()
