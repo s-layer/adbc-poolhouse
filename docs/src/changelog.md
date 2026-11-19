@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-11-19
+
 ### Changed
 
 - `pool.connect()` on a pool closed with `close_pool`, `close_async_pool` or by leaving `managed_pool` / `managed_async_pool` now raises the new `PoolClosedError` (a `PoolhouseError`), and so does a `connect()` that was already waiting for a free connection when the pool closed. On the ADBC backends it used to fail with the driver's `ProgrammingError: Database is not initialized`, and on a `DatabricksPythonConfig` pool it opened a new connection that nothing would close. Calling `close_pool` again is now a no-op, unless closing the source failed the first time, in which case it tries again.

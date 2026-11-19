@@ -579,7 +579,7 @@ cancellation that arrives mid-close cannot abandon the pool or a connection in a
 unknown state, so driver resources are released even when the surrounding task is
 being torn down.
 
-Shielded is not the same as drained. `close_async_pool` disposes the connections
+Shielded is not the same as drained. `close_async_pool` closes the connections
 sitting idle in the pool and closes the ADBC source connection. It does not wait
 for connections that are still checked out; each is closed when it is checked
 in, rather than going back into the pool, and `await pool.connect()` on the closed
