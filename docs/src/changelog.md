@@ -6,10 +6,13 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- `pool.connect()` on a pool closed with `close_pool`, `close_async_pool` or by leaving `managed_pool` / `managed_async_pool` now raises the new `PoolClosedError` (a `PoolhouseError`). On the ADBC backends it used to fail with the driver's `ProgrammingError: Database is not initialized`, and on a `DatabricksPythonConfig` pool it opened a new connection that nothing would close. Calling `close_pool` twice is now a no-op.
+
 - The `databricks-python` and `databricks-python-m2m` extras now install `databricks-sql-connector[kernel,pyarrow]`, up from `[pyarrow]`. `DatabricksPythonConfig` defaults to `use_kernel=True`, and the connector's kernel path, which Lakehouse//RT requires, needs the `databricks-sql-kernel` package that only the `kernel` extra brings. Without it, a pool on the default config could not open a connection until you installed the kernel yourself. The kernel requires `pyarrow>=23.0.1,<24`, so these extras, and `all`, which includes `databricks-python-m2m`, now hold PyArrow below 24. PyArrow 23 has no Python 3.15 wheels, and the kernel has no wheels for musl (Alpine) or glibc older than 2.28, so installs there build from source; the Databricks Python guide lists the details.
 
 ### Fixed
 
+- A connection still checked out when its pool was closed is now closed when it is checked in. It used to go back into the closed pool and stay open, and `pool.checkedout()` then read -1. `checkedout()` now keeps counting such connections until they return.
 - `DatabricksPythonConfig` pools now raise `adbc_driver_manager.dbapi` errors. The connector's own `databricks.sql.exc` errors used to pass through unchanged, so a handler written for the ADBC backends, `except adbc_driver_manager.dbapi.Error`, missed a failed connection or a rejected query on this one. Each is now re-raised as the ADBC class of the same DB-API category, with the connector's error as `__cause__`.
 
 ## [1.7.0] - 2026-10-19

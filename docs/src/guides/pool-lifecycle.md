@@ -102,7 +102,7 @@ close_pool(pool)
 
 `close_pool` drains the pool and closes each pooled connection, and on the ADBC path it also releases the shared source connection, all in one call. Calling `pool.dispose()` alone leaves a file handle or network socket open until the process exits.
 
-What it does not do is wait. Connections that are still checked out when you call it are neither closed nor waited for, and the source connection closes immediately regardless. Call it once the work using the pool has finished, not alongside it.
+What it does not do is wait. The source connection closes immediately, and connections that are still checked out are not waited for: each one is closed when it is checked in, rather than going back into the pool. `pool.checkedout()` keeps counting them until they come back. A closed pool stays closed: `pool.connect()` raises [`PoolClosedError`][adbc_poolhouse.PoolClosedError], so create a new pool if you need one. Call `close_pool` once the work using the pool has finished, not alongside it.
 
 In practice you wire this into your framework's startup and shutdown hooks: create the pool when the app boots and call `close_pool` when it shuts down. [Consumer patterns](consumer-patterns.md#the-sync-pool-in-a-fastapi-lifespan) has a FastAPI lifespan that does exactly this.
 
@@ -177,7 +177,7 @@ A write that is never committed is rolled back when the connection checks in, an
 
 ## Catching errors
 
-adbc-poolhouse's own exceptions both subclass [`PoolhouseError`][adbc_poolhouse.PoolhouseError]: [`ConfigurationError`][adbc_poolhouse.ConfigurationError] for invalid configuration and [`ConnectionBusyError`][adbc_poolhouse.ConnectionBusyError] for concurrent use of one async connection. `except PoolhouseError` catches `ConnectionBusyError` at runtime.
+adbc-poolhouse's own exceptions both subclass [`PoolhouseError`][adbc_poolhouse.PoolhouseError]: [`ConfigurationError`][adbc_poolhouse.ConfigurationError] for invalid configuration and [`ConnectionBusyError`][adbc_poolhouse.ConnectionBusyError] for concurrent use of one async connection, and [`PoolClosedError`][adbc_poolhouse.PoolClosedError] for `connect()` on a closed pool. `except PoolhouseError` catches all of them at runtime.
 
 It does not catch a configuration failure. Config validation runs inside Pydantic validators, so building a config surfaces `pydantic.ValidationError`, which sits outside this hierarchy however the validator failed. Guard config construction with `except pydantic.ValidationError` and the runtime paths with `except PoolhouseError`.
 

@@ -34,7 +34,7 @@ read the file.
 
 - the sync and async pools against real DuckDB and SQLite, and the Snowflake and
   Databricks cassettes in replay
-- random orderings of checkout, check-in, cancel and invalidate
+- random orderings of checkout, check-in, cancel, invalidate and pool close
   (`tests/async/test_pool_state_machine.py`)
 
 ## What it does not cover

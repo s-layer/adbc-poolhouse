@@ -21,15 +21,20 @@ Internal helpers are prefixed with _ and not exported.
 from __future__ import annotations
 
 import contextlib
-from typing import TYPE_CHECKING, overload
+import threading
+from typing import TYPE_CHECKING, Any, overload
 
 import sqlalchemy.pool
 from sqlalchemy import event
+from sqlalchemy.util import queue as sqla_queue
 
 from adbc_poolhouse._driver_api import create_adbc_connection
+from adbc_poolhouse._exceptions import PoolClosedError
 
 if TYPE_CHECKING:
     import collections.abc
+
+    from sqlalchemy.pool import ConnectionPoolEntry
 
     from adbc_poolhouse._backend import ConnectionBackend
     from adbc_poolhouse._base_config import WarehouseConfig
@@ -42,6 +47,73 @@ _TUNING_DEFAULTS: dict[str, int | bool] = {
     "recycle": 3600,
     "pre_ping": False,
 }
+
+
+class _PoolhouseQueuePool(sqlalchemy.pool.QueuePool):
+    """
+    A `QueuePool` that `close_pool` can close for good.
+
+    SQLAlchemy's `dispose()` is a reset: the pool keeps serving afterwards, and a
+    connection checked out across it is put back into the queue on check-in. A
+    pool whose ADBC source has been closed cannot serve again, so `close_pool`
+    calls `_close()` instead, after which:
+
+    - `connect()` raises `PoolClosedError` rather than trying to open a
+      connection (on the ADBC path, a clone of the closed source);
+    - a connection checked in is closed, not queued, so nothing is left open in a
+      pool no one will close again;
+    - `checkedout()` keeps counting the connections still out until they return.
+
+    `dispose()` itself keeps SQLAlchemy's meaning.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._poolhouse_closed = False
+        # Held across the closed check and the queue put on check-in, so a
+        # connection returned while `_close()` runs is either drained by it or
+        # closed on return, never left in the queue.
+        self._poolhouse_close_lock = threading.Lock()
+
+    def _close(self) -> bool:
+        """
+        Mark the pool closed and close its idle connections.
+
+        Returns:
+            `False` if the pool was already closed, else `True`.
+        """
+        with self._poolhouse_close_lock:
+            if self._poolhouse_closed:
+                return False
+            self._poolhouse_closed = True
+            while True:
+                try:
+                    record = self._pool.get(False)
+                except sqla_queue.Empty:
+                    break
+                try:
+                    record.close()
+                finally:
+                    # The record leaves the pool for good: drop it from the count,
+                    # as a check-in that overflows the queue does.
+                    self._dec_overflow()
+        self.logger.info("Pool closed. %s", self.status())
+        return True
+
+    def _do_get(self) -> ConnectionPoolEntry:
+        if self._poolhouse_closed:
+            raise PoolClosedError
+        return super()._do_get()
+
+    def _do_return_conn(self, record: ConnectionPoolEntry) -> None:
+        with self._poolhouse_close_lock:
+            if not self._poolhouse_closed:
+                super()._do_return_conn(record)
+                return
+        try:
+            record.close()
+        finally:
+            self._dec_overflow()
 
 
 def _resolve_tuning(
@@ -152,7 +224,7 @@ def _create_pool_impl(
         dbapi_module=resolved_dbapi_module,
     )
 
-    pool = sqlalchemy.pool.QueuePool(
+    pool = _PoolhouseQueuePool(
         source.adbc_clone,  # type: ignore[arg-type]
         pool_size=pool_size,
         max_overflow=max_overflow,
@@ -185,7 +257,7 @@ def _create_native_pool(
     it down, and its ``on_reset`` runs on the pool ``reset`` event to release
     Arrow buffers on check-in.
     """
-    pool = sqlalchemy.pool.QueuePool(
+    pool = _PoolhouseQueuePool(
         backend.creator(),
         pool_size=pool_size,
         max_overflow=max_overflow,
@@ -368,7 +440,11 @@ def close_pool(pool: sqlalchemy.pool.QueuePool) -> None:
         close_pool(pool)
         ```
     """
-    pool.dispose()
+    if isinstance(pool, _PoolhouseQueuePool):
+        if not pool._close():  # noqa: SLF001
+            return
+    else:
+        pool.dispose()
     native_backend = getattr(pool, "_native_backend", None)
     if native_backend is not None:
         native_backend.close()
