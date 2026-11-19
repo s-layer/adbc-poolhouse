@@ -293,3 +293,32 @@ def test_dispose_on_a_closed_pool_is_a_no_op(pool: sqlalchemy.pool.QueuePool) ->
     pool.dispose()
     with pytest.raises(PoolClosedError):
         pool.connect()
+
+
+def test_waiting_checkout_is_woken_even_when_the_drain_fails(tmp_path: Path) -> None:
+    """A failing `close` listener stops the drain, but must not leave waiters blocked."""
+    pool = create_pool(
+        DuckDBConfig(database=str(tmp_path / "drain.db")),
+        pool_size=1,
+        max_overflow=0,
+        timeout=20,
+    )
+    held = pool.connect()
+    thread, outcome = _connect_in_thread(pool)
+    _wait_until_blocked(pool)
+
+    def _fail(_dbapi_conn: object, _rec: object) -> None:
+        raise RuntimeError("close listener failed")
+
+    event.listen(pool, "close", _fail)
+    # Holding the queue's mutex, check the connection in (so the drain has one to
+    # close) and close the pool, so the waiter cannot take the connection first.
+    with cast("Any", pool)._pool.mutex:
+        held.close()
+        with pytest.raises(RuntimeError, match="close listener failed"):
+            close_pool(pool)
+    thread.join(timeout=5)
+    assert not thread.is_alive(), "the waiting checkout was still blocked 5 s after close"
+    assert isinstance(outcome[0], PoolClosedError), outcome[0]
+    event.remove(pool, "close", _fail)
+    close_pool(pool)
