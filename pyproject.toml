@@ -69,6 +69,7 @@ dev = [
     "aiotools>=2.2",
     "pytest-repeat",
     "pytest-timeout",
+    "hypothesis>=6.100",
 ]
 docs = [
     "mkdocs>=1.6.0",
