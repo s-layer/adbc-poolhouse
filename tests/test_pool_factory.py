@@ -68,6 +68,7 @@ class TestCreatePoolDuckDB:
             pool.dispose()
             pool._adbc_source.close()  # type: ignore[attr-defined]
 
+    @pytest.mark.optional_deps
     def test_sync_cursor_fetch_polars_returns_dataframe(self, tmp_path: Path) -> None:
         """
         A sync pool cursor's own `fetch_polars` returns a `polars.DataFrame`.
