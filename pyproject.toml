@@ -10,7 +10,7 @@ requires-python = ">=3.11"
 dependencies = [
     "pydantic-settings>=2.0.0",
     "sqlalchemy>=2.0.0",
-    "adbc-driver-manager>=1.8.0",
+    "adbc-driver-manager>=1.13.0",
 ]
 
 [project.optional-dependencies]
@@ -87,6 +87,12 @@ adbc_auto_patch = [
     "adbc_poolhouse._adapters._databricks_python",
 ]
 adbc_cassette_dir = "tests/cassettes"
+# Every test gets a hard limit, not only the `concurrency_marks` ones: a hang
+# elsewhere (an unmarked test, a fixture teardown) otherwise runs until the CI
+# job's timeout cancels it, and a cancelled job keeps no log. The `thread`
+# method dumps every thread's stack before exiting, so the hang can be read.
+timeout = 300
+timeout_method = "thread"
 markers = [
     "snowflake: requires live Snowflake credentials (recording only; cassettes checked in for CI replay)",
     "databricks: requires live Databricks credentials (recording only; cassettes checked in for CI replay)",

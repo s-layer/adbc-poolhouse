@@ -392,9 +392,8 @@ in. You can read it outside the `async with` block, the same way a
 `fetch_arrow_table` result survives check-in.
 
 [`fetch_polars`][adbc_poolhouse._async._cursor.AsyncCursor.fetch_polars] returns a
-`polars.DataFrame` on polars 1 and polars 2 alike. Under
-polars 2 the ADBC driver manager's own `fetch_polars` returns a one-column struct
-`Series` instead, so if you call the sync driver cursor directly you will see that.
+`polars.DataFrame` on polars 1 and polars 2 alike, and so does the sync driver
+cursor's own `fetch_polars`.
 
 pandas and polars are not adbc-poolhouse dependencies. You install whichever you use.
 adbc-poolhouse does not import either before the driver does: the driver imports
