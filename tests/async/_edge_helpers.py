@@ -62,7 +62,9 @@ _ASYNC_REPEAT = int(os.environ.get("ADBC_ASYNC_REPEAT", "1"))
 _ASYNC_TIMEOUT_S = int(os.environ.get("ADBC_ASYNC_TIMEOUT_S", "60"))
 concurrency_marks = [
     pytest.mark.repeat(_ASYNC_REPEAT),
-    pytest.mark.timeout(_ASYNC_TIMEOUT_S),
+    # `signal`, not the suite-wide `thread` default (pyproject.toml): an
+    # over-budget iteration fails on its own and the run goes on.
+    pytest.mark.timeout(_ASYNC_TIMEOUT_S, method="signal"),
 ]
 
 
