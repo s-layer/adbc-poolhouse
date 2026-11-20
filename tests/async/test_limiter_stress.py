@@ -33,8 +33,8 @@ Two load-bearing landmines (Phase 24-26):
 
 - Deadlock detection is a real-clock `time.monotonic()` watchdog thread
   (`real_clock_watchdog`), NEVER `anyio.fail_after`: a virtual `fail_after`
-  autojumps to its own deadline under the trio `MockClock(autojump_threshold=0)`
-  the instant every worker blocks off-loop, tripping every run (D-27-11).
+  autojumps to its own deadline under the trio autojumping `MockClock`
+  5 ms after every worker blocks off-loop, tripping every run (D-27-11).
 - The gated flood drains via `close()` on each stub cursor, never `release()`:
   `close()` latches the sticky `_closed` flag so `_block` short-circuits even for a
   worker that has not yet entered, whereas a plain `release()` re-arms on the next
@@ -241,7 +241,7 @@ class TestLimiterSmokeFlood:
         runner speed (it failed on slow CI runners). A hang is caught by the suite's
         pytest-timeout and the CI job timeout. A virtual `anyio.fail_after` is
         deliberately NOT used either --- it autojumps to its own deadline under the
-        trio `MockClock` the instant the workers block off-loop and would trip every
+        trio `MockClock` 5 ms after the workers block off-loop and would trip every
         run (Phase 24-26 landmine).
         """
         # Hold no more than the pool's capacity at once, so the bounded real

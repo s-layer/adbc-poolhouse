@@ -13,7 +13,7 @@ paths.
 The two backends inject virtual time in structurally different ways, which is
 WHY the facade dispatches on the backend name (D-01):
 
-- trio: the `trio.testing.MockClock(autojump_threshold=0)` is injected at the
+- trio: a `trio.testing.MockClock(autojump_threshold=TRIO_AUTOJUMP_THRESHOLD_S)` is injected at the
   RUNNER by the `anyio_backend` fixture (it forwards `clock=` straight to the
   trio guest run). There is nothing to do in-body, so the trio leg is a bare
   `yield`.
@@ -31,6 +31,20 @@ import aiotools
 
 if TYPE_CHECKING:
     from collections.abc import Generator
+
+
+TRIO_AUTOJUMP_THRESHOLD_S = 0.005
+"""
+Real seconds the trio `MockClock` waits, with every task blocked, before it jumps.
+
+Not 0. With `autojump_threshold=0`, `MockClock.deadline_to_sleep_time` returns 0
+whenever a task waits on a worker thread, so the trio run loop polls epoll with a
+zero timeout until the thread finishes. That busy loop competes with the worker
+for the CPU: the real-driver trio tests ran about 30 times slower than their
+asyncio twins, and on a slow runner the 3.14 suite ran past the 15-minute CI job
+timeout. 5 ms lets the loop sleep between polls while a virtual deadline still
+fires after 5 ms of real idleness instead of its virtual length.
+"""
 
 
 @contextlib.contextmanager

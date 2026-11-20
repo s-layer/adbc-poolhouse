@@ -43,6 +43,7 @@ from adbc_poolhouse import (
     create_async_pool,
 )
 from adbc_poolhouse._async._connection import AsyncConnection
+from tests._async_harness.clock import TRIO_AUTOJUMP_THRESHOLD_S
 from tests._async_harness.stubs import BlockingStubConnection
 
 if TYPE_CHECKING:
@@ -66,8 +67,8 @@ def anyio_backend(request: pytest.FixtureRequest) -> object:
     anyio's pytest plugin: every `@pytest.mark.anyio` test that requests this
     fixture (directly or via `anyio_backend_name`) runs once per backend. The trio
     leg returns the `("trio", {options})` tuple so anyio forwards a
-    `trio.testing.MockClock(autojump_threshold=0)` into the trio loop, making
-    virtual deadlines fire with no wall-clock cost.
+    `trio.testing.MockClock` (autojump threshold `TRIO_AUTOJUMP_THRESHOLD_S`) into
+    the trio loop, making virtual deadlines fire at almost no wall-clock cost.
 
     Function-scoped on purpose: a fresh `MockClock` per test prevents virtual-time
     bleed between tests.
@@ -78,11 +79,14 @@ def anyio_backend(request: pytest.FixtureRequest) -> object:
 
     Returns:
         `"asyncio"` for the asyncio leg, or the
-        `("trio", {"clock": MockClock(autojump_threshold=0)})` tuple for the trio
-        leg, which anyio splits into the backend name plus runner options.
+        `("trio", {"clock": MockClock(autojump_threshold=TRIO_AUTOJUMP_THRESHOLD_S)})`
+        tuple for the trio leg, which anyio splits into the backend name plus runner options.
     """
     if request.param == "trio":
-        return ("trio", {"clock": trio.testing.MockClock(autojump_threshold=0)})
+        return (
+            "trio",
+            {"clock": trio.testing.MockClock(autojump_threshold=TRIO_AUTOJUMP_THRESHOLD_S)},
+        )
     return "asyncio"
 
 

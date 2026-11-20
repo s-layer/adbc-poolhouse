@@ -6,8 +6,8 @@ Two load-bearing utilities the concurrency EDGE tests reuse:
 - `real_clock_watchdog`: a wall-clock side-thread watchdog that `close()`s a
   blocking stub if the body overruns, so a gating regression that strands a
   non-cancellable worker FAILS FAST instead of hanging CI. It is deliberately NOT
-  `anyio.fail_after`: under the trio leg's `MockClock(autojump_threshold=0)` a
-  virtual `fail_after` autojumps to its OWN deadline the instant every task is
+  `anyio.fail_after`: under the trio leg's autojumping `MockClock` a
+  virtual `fail_after` autojumps to its OWN deadline 5 ms after every task is
   blocked off-loop, so it would trip spuriously every run (Plan 01 lesson, MEMORY
   MockClock gotcha). The watchdog gives the same "no test ever hangs" guarantee
   the `fail_after` wording in the plan asks for, measured on real time.

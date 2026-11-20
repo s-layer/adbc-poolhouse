@@ -27,6 +27,8 @@ from __future__ import annotations
 import pytest
 import trio.testing
 
+from tests._async_harness.clock import TRIO_AUTOJUMP_THRESHOLD_S
+
 
 @pytest.fixture(params=["asyncio", "trio"])
 def anyio_backend(request: pytest.FixtureRequest) -> object:
@@ -37,10 +39,11 @@ def anyio_backend(request: pytest.FixtureRequest) -> object:
     this fixture (directly or via `anyio_backend_name`) runs once per backend. The
     trio leg returns the `("trio", {options})` tuple form so anyio forwards the
     options dict straight through to `trio.lowlevel.start_guest_run`, injecting a
-    `trio.testing.MockClock(autojump_threshold=0)` into the trio loop. With
-    `autojump_threshold=0` the clock jumps to the next scheduled deadline the
-    instant every task is blocked, so `anyio.fail_after` / `move_on_after` fire on
-    virtual time with no wall-clock cost (D-01, trio leg).
+    `trio.testing.MockClock` into the trio loop. With `autojump_threshold` set to
+    `TRIO_AUTOJUMP_THRESHOLD_S` (5 ms, see `clock.py` for why not 0), the clock
+    jumps to the next scheduled deadline once every task has been blocked for 5 ms,
+    so `anyio.fail_after` / `move_on_after` fire on virtual time at almost no
+    wall-clock cost (D-01, trio leg).
 
     The fixture is FUNCTION-scoped (the default) deliberately: it constructs a
     fresh `MockClock` for every test. A session- or module-scoped fixture would
@@ -54,8 +57,8 @@ def anyio_backend(request: pytest.FixtureRequest) -> object:
 
     Returns:
         For the asyncio leg, the string `"asyncio"`. For the trio leg, the tuple
-        `("trio", {"clock": trio.testing.MockClock(autojump_threshold=0)})`, which
-        anyio splits into the backend name plus the options forwarded to the trio
+        `("trio", {"clock": MockClock(autojump_threshold=TRIO_AUTOJUMP_THRESHOLD_S)})`,
+        which anyio splits into the backend name plus the options forwarded to the trio
         runner.
 
     Example:
@@ -72,5 +75,8 @@ def anyio_backend(request: pytest.FixtureRequest) -> object:
         ```
     """
     if request.param == "trio":
-        return ("trio", {"clock": trio.testing.MockClock(autojump_threshold=0)})
+        return (
+            "trio",
+            {"clock": trio.testing.MockClock(autojump_threshold=TRIO_AUTOJUMP_THRESHOLD_S)},
+        )
     return "asyncio"

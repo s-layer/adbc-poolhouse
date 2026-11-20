@@ -63,9 +63,9 @@ _ENTRY_POLL_BUDGET_S = 5.0
 # released almost immediately, so a re-arm regression that strands the
 # non-cancellable worker is broken open here instead of hanging the task group /
 # CI. It MUST be a real `time.monotonic()` watchdog on a side thread, not an
-# `anyio.fail_after`: under the trio leg's `MockClock(autojump_threshold=0)` a
-# virtual `fail_after` autojumps to its OWN deadline the instant the worker blocks
-# off-loop (all trio tasks idle) and would trip spuriously every run.
+# `anyio.fail_after`: under the trio leg's autojumping `MockClock` a
+# virtual `fail_after` autojumps to its OWN deadline once the worker has blocked
+# off-loop for 5 ms (all trio tasks idle) and would trip spuriously every run.
 _REARM_WATCHDOG_S = 5.0
 
 
@@ -80,7 +80,7 @@ def _real_clock_watchdog(stub: BlockingStubCursor, budget_s: float) -> Generator
     group exit and the post-body assertion below trips) instead of hanging CI.
     This is the real-clock watchdog the re-arm proof needs because a virtual
     `anyio.fail_after` would autojump to its own deadline under the trio
-    `MockClock` the instant the worker blocks off-loop.
+    `MockClock` 5 ms after the worker blocks off-loop.
 
     Args:
         stub: The cursor whose blocked worker must be released on a timeout.
@@ -201,7 +201,7 @@ class TestEventGating:
         `await entered.wait()` can only return once the worker is genuinely inside
         `fetch_arrow_table`. The whole body runs under a REAL-clock watchdog
         (`_real_clock_watchdog`, NOT `anyio.fail_after` -- a virtual `fail_after`
-        autojumps under the trio `MockClock` the instant the worker blocks
+        autojumps under the trio `MockClock` 5 ms after the worker blocks
         off-loop) so a re-arm regression that strands the non-cancellable worker
         is broken open and fails fast instead of hanging. Every gated call is also
         released in a `finally` -- a missed release would deadlock the group at
